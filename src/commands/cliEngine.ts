@@ -1,19 +1,5 @@
-// Copyright (c) Microsoft Corporation
-// All rights reserved.
-//
-// MIT License
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-// documentation files (the "Software"), to deal in the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and
-// to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-// The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
-// BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 import * as argparse from 'argparse';
 import * as path from 'path';
@@ -50,12 +36,17 @@ interface IArgument extends argparse.Namespace {
     [index: string]: any;
 }
 
-type CommandCallback = (a: IArgument) => any;
-
 export interface IResult {
     command: string;
     args?: IArgument;
     result: any | undefined;
+}
+
+type CommandCallback = (a: IArgument) => any;
+type FormmaterCallback = (r: IResult) => void;
+
+function defaultFommater(result: IResult): void {
+    console.log(JSON.stringify(result.result || "", undefined, 4));
 }
 
 /**
@@ -91,7 +82,7 @@ export class CliEngine {
     protected parser: argparse.ArgumentParser;
     protected subparsers: argparse.SubParser;
     protected executors: { [index: string]: CommandCallback; } = {};
-    protected formatters: { [index: string]: (result: object) => void; } = {};
+    protected formatters: { [index: string]: FormmaterCallback; } = {};
 
     constructor(input?: string | IClusterWithCache[]) {
         this.manager = new LocalClustersManager();
@@ -132,7 +123,9 @@ export class CliEngine {
     public registerCommand(
         subCommand: ISubParserOptions,
         args: IArgumentOptions[],
-        cb: CommandCallback, exclusiveArgs?: IExclusiveArgGroup[]
+        cb: CommandCallback,
+        exclusiveArgs?: IExclusiveArgGroup[],
+        formatter?: FormmaterCallback
     ): void {
         const addArgument = (ps: argparse.ArgumentParser | argparse.ArgumentGroup, a: IArgumentOptions) => {
             const name: string | string[] = a.name;
@@ -157,15 +150,7 @@ export class CliEngine {
             }
         }
         this.executors[cmd] = cb;
-    }
-
-    /**
-     * provide a formatter callback to process the result for screen printing
-     */
-    public registerFormatter(name: string, cb: (result: object) => void): void {
-        this.formatters[name] = (result) => {
-            cb(result);
-        };
+        this.formatters[cmd] = formatter || defaultFommater;
     }
 
     /**
@@ -186,14 +171,6 @@ export class CliEngine {
      */
     public toScreen(result: IResult): void {
         Util.debug('results received', result);
-        if (result.command in this.formatters) {
-            this.formatters[result.command](result);
-        } else {
-            if (result.result != null) {
-                console.dir(result.result);
-            } else {
-                console.log();
-            }
-        }
+        this.formatters[result.command](result);
     }
 }
