@@ -15,9 +15,9 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-import { ISuperJobInfo } from "./models/superJob";
-import { JobClient, IJobConfig } from ".";
-import { IPAIClusterInfo, IPAICluster } from "./models/cluster";
+import { ISuperJobInfo } from "./superJob";
+import { JobClient, IJobConfig } from "../../src";
+import { IPAIClusterInfo, IPAICluster } from "../../src/models/cluster";
 
 const now = () => new Date().getTime();
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -25,7 +25,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 /**
  * OpenPAI Super Scheduler.
  */
-class SuperScheduler {
+export class SuperScheduler {
     jobs: ISuperJobInfo[] = [];
     clusters: { [name: string]: JobClient; } = {};
     strategy: IScheduleStrategy;
@@ -73,15 +73,16 @@ class SuperScheduler {
         };
 
         let paiJobName = paiJob.name;
-        clusters.forEach(async (val, idx) => {
+        superjob.clusters.forEach(async (val, idx) => {
             paiJob.name = paiJobName + val;
+            let client = this.clusters[val];
             await this.clusters[val].submit(paiJob, token);
         });
         
         // sleep 5s to make sure job created in each cluster
         await delay(5000);
 
-        clusters.forEach(async (val, idx) => {
+        superjob.clusters.forEach(async (val, idx) => {
             superjob.IPaiJobs[idx] = await this.clusters[val].get(username, paiJobName + val);
         });
 
@@ -126,6 +127,32 @@ class SuperScheduler {
         });
     };
 
+    test = async (name: string, clusters: string[], priority: number[], paiJob: IJobConfig, username: string, token?: string): Promise<ISuperJobInfo> => {
+        if (this.findJob(name))
+        {
+            throw new Error(`JobAlreadyExists: ${name}`);
+        }
+
+        let superjob: ISuperJobInfo = {
+            name: name,
+            username: username,
+            state: 'WAITING',
+            clusters: clusters.map((cluster) => username + cluster),
+            priority: priority,
+            IPaiJobs: [],
+            createdTime: now(),
+            scheduleCounter: 0,
+            nextScheduleTime: now() + 1 * 60,
+            token: token,
+        };
+
+        var client: JobClient;
+        superjob.clusters.forEach(k => {
+            client = this.clusters[k];
+        });
+        return superjob;
+    };
+
 }
 
 
@@ -133,11 +160,11 @@ class SuperScheduler {
  * here is the schedule strategy 
  */
 
-interface  IScheduleStrategy {
+export interface IScheduleStrategy {
     scheduleSuperJob(job: ISuperJobInfo) : string;
 }
 
-class LinerScheduleStrategy {
+export class LinerScheduleStrategy {
     factor: number;
     observingTime: number;
 
