@@ -84,6 +84,7 @@ export class SuperScheduler {
 
         superjob.clusters.forEach(async (val, idx) => {
             superjob.IPaiJobs[idx] = await this.clusters[val].get(username, paiJobName + val);
+            console.log(superjob.IPaiJobs[idx]);
         });
 
         //TODO: add a new super job entity in database

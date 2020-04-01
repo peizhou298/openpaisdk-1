@@ -19,7 +19,7 @@ import {SuperScheduler, LinerScheduleStrategy} from "./SuperScheduler";
 import { IPAICluster } from "../../src";
 import * as restify from 'restify';
 
-let clusters: IPAICluster[] = [{username: 'admin', password: 'admin-password', web_portal_uri: 'http://10.151.40.32'}]
+let clusters = [];
 
 const scheduler = new SuperScheduler(new LinerScheduleStrategy(1, 0), clusters);
     setInterval(async () => {
