@@ -1,5 +1,9 @@
 {
   "dependencies": {
-    "restify": "registry:dt/restify#2.0.0+20170317170827"
+    "restify": "registry:dt/restify#2.0.0+20170317170827",
+    "sequelize": "registry:npm/sequelize#4.0.0+20170801015413"
+  },
+  "globalDependencies": {
+    "sqlite3": "registry:dt/sqlite3#2.2.3+20160724070935"
   }
 }

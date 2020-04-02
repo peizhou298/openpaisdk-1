@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-import { IJobStatus } from "../../src";
+import { IJobStatus, IJobConfig } from "../../src";
 
 /**
  * OpenPAI super job info.
@@ -23,13 +23,17 @@ import { IJobStatus } from "../../src";
 export interface ISuperJobInfo {
     name: string;
     username: string;
-    token?: string;
     state: 'WAITING' | 'OBSERVING' | 'SCHEDULED' | 'STOPPED' | 'FAILED' | 'UNKNOWN';
     createdTime: number;
     completedTime?: number;
     scheduleCounter: number;
     nextScheduleTime?: number;
     clusters: string[];
-    priority: number[];
-    IPaiJobs: IJobStatus[];
+    IPaiJobs?: IJobStatus[];
+}
+
+export interface ISuperJobConfig extends IJobConfig {
+    clusters: string[];
+    scheduleInterval?: number;
+    priority?: number[];
 }

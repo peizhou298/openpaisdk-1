@@ -9,7 +9,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@types/restify": "^8.4.2",
     "bunyan": "^1.8.12",
     "restify": "^8.5.1"
+  },
+  "devDependencies": {
+    "sqlite3": "^4.1.1"
   }
 }

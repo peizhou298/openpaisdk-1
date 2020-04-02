@@ -15,9 +15,10 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-import { ISuperJobInfo } from "./superJob";
+import {ISuperJobConfig, ISuperJobInfo } from "./superJob";
 import { JobClient, IJobConfig } from "../../src";
-import { IPAIClusterInfo, IPAICluster } from "../../src/models/cluster";
+import { IPAICluster } from "../../src/models/cluster";
+import { SuperJob } from "./SuperSchedulerEntity";
 
 const now = () => new Date().getTime();
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -27,63 +28,86 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  */
 export class SuperScheduler {
     jobs: ISuperJobInfo[] = [];
-    clusters: { [name: string]: JobClient; } = {};
-    strategy: IScheduleStrategy;
+    clusters: {[name: string]: {client: JobClient; priority: number}} = {};
+    strategy: stragety.IScheduleStrategy;
 
-    constructor(strategy : IScheduleStrategy, clusters? : IPAICluster[]) {
-       this.strategy = strategy;
-       if (clusters) {
-           clusters.forEach(cluster => {
-               this.addCluster(cluster);
-           });
-       }
+    constructor(config: any) {
+        var strategyName = "LinerScheduleStrategy";
+        if (config.strategy && config.strategy.name) {
+            strategyName = config.strategy.name;
+        }
+
+        try {
+            this.strategy = new stragety[strategyName](config.strategy ? config.strategy : null);
+        } catch {
+            console.log("Stragery %s not supported, use default stragety instead.", strategyName);
+            this.strategy = new stragety.LinerScheduleStrategy();
+        }
+        
+        const clusters: any[] = config.clusters;
+        clusters.forEach((cluster) => {
+            let paiCluster: IPAICluster = {
+                info: {name: cluster.name},
+                username: cluster.username,
+                token: cluster.token,
+                web_portal_uri: cluster.web_portal_uri};
+
+            this.addCluster(paiCluster, cluster.priority?cluster.priority:1);
+        });
     }
 
     findJob = (name: string) => this.jobs[this.jobs.findIndex(val => val.name == name)];
 
-    addCluster = (cfg: IPAICluster) => {
-        //TODO : use a must existed property, add login auth
-        let clusterName = cfg.username + (cfg.info?.name ? cfg.info?.name : "abc");
+    addCluster = (paiCluster: IPAICluster, priority: number)=> {
+        let clusterName = paiCluster.username + paiCluster.info.name
         if(clusterName in this.clusters)
         {
-            throw new Error( `ClusterAlreadyExists: ${cfg}`);
+            throw new Error( `ClusterAlreadyExists: ${paiCluster}`);
         }
 
-        this.clusters[clusterName] = new JobClient(cfg);
-        return cfg;
+        this.clusters[clusterName] = {client: new JobClient(paiCluster), priority: priority};
+        return this.clusters[clusterName];
     };
 
-    submitJob = async (name: string, clusters: string[], priority: number[], paiJob: IJobConfig, username: string, token?: string): Promise<ISuperJobInfo> => {
-        if (this.findJob(name))
+    submitJob = async (config: ISuperJobConfig, username: string) => {
+        if (this.findJob(config.name))
         {
             throw new Error(`JobAlreadyExists: ${name}`);
         }
 
         let superjob: ISuperJobInfo = {
-            name: name,
+            name: config.name,
             username: username,
             state: 'WAITING',
-            clusters: clusters.map((cluster) => username + cluster),
-            priority: priority,
+            clusters: config.clusters.map((cluster) => username + cluster),
             IPaiJobs: [],
             createdTime: now(),
             scheduleCounter: 0,
-            nextScheduleTime: now() + 1 * 60,
-            token: token,
+            nextScheduleTime: now() + config.scheduleInterval?config.scheduleInterval : 2 * 60,
         };
 
-        let paiJobName = paiJob.name;
+        SuperJob.create({
+            name: config.name,
+            username: username,
+            state: 'WAITING',
+            createdTime: superjob.createdTime,
+            clusters: config.clusters.toString(),
+            scheduleCounter: 0,
+            nextScheduleTime:superjob.nextScheduleTime,
+        }).then(superJob => {
+            console.log("Create a new superJob:", superJob);
+        });
+
         superjob.clusters.forEach(async (val, idx) => {
-            paiJob.name = paiJobName + val;
-            let client = this.clusters[val];
-            await this.clusters[val].submit(paiJob, token);
+            let client = this.clusters[val].client;
+            await client.submit(config as IJobConfig);
         });
         
         // sleep 5s to make sure job created in each cluster
         await delay(5000);
 
         superjob.clusters.forEach(async (val, idx) => {
-            superjob.IPaiJobs[idx] = await this.clusters[val].get(username, paiJobName + val);
+            superjob.IPaiJobs[idx] = await this.clusters[val].client.get(username, config.name);
             console.log(superjob.IPaiJobs[idx]);
         });
 
@@ -95,7 +119,7 @@ export class SuperScheduler {
     scheduleJob = async (job: ISuperJobInfo) => {
         // update status of each sub jobs
         job.clusters.forEach(async (val, idx) => {
-            const client = this.clusters[val];
+            const client = this.clusters[val].client;
             const subJob = job.IPaiJobs[idx];
             if (subJob && ['WAITING', 'RUNNING'].indexOf(subJob.jobStatus.state) > -1) {
                 // need to query latest status
@@ -105,15 +129,26 @@ export class SuperScheduler {
             }
         });
 
-        let cluster = this.strategy.scheduleSuperJob(job);
-        // TODO: add latest state to database async
+        const currentState = job.state;
+        let cluster = this.strategy.scheduleSuperJob(job, this.clusters);
+        if (currentState !== job.state) {
+            SuperJob.update({ state: job.state }, {
+                where: {
+                  name: job.name,
+                  username: job.username
+                }
+              }).then(() => {
+                console.log("Update user %s job %s status to %s", job.username, job.name, job.state);
+              });
+        }
+
         if (job.state === 'SCHEDULED') {
             job.clusters.forEach(async (val, idx) => {
-                const client = this.clusters[val];
+                const client = this.clusters[val].client;
                 const subJob = job.IPaiJobs[idx];
                 if (val != cluster && ['WAITING', 'RUNNING'].indexOf(subJob.jobStatus.state) > -1 ) {
                     if (subJob.name) {
-                        await client.delete(job.username, subJob.name, job.token);
+                        await client.delete(job.username, subJob.name);
                     }
                 }
             });
@@ -127,33 +162,6 @@ export class SuperScheduler {
             this.scheduleJob(job);
         });
     };
-
-    test = async (name: string, clusters: string[], priority: number[], paiJob: IJobConfig, username: string, token?: string): Promise<ISuperJobInfo> => {
-        if (this.findJob(name))
-        {
-            throw new Error(`JobAlreadyExists: ${name}`);
-        }
-
-        let superjob: ISuperJobInfo = {
-            name: name,
-            username: username,
-            state: 'WAITING',
-            clusters: clusters.map((cluster) => username + cluster),
-            priority: priority,
-            IPaiJobs: [],
-            createdTime: now(),
-            scheduleCounter: 0,
-            nextScheduleTime: now() + 1 * 60,
-            token: token,
-        };
-
-        var client: JobClient;
-        superjob.clusters.forEach(k => {
-            client = this.clusters[k];
-        });
-        return superjob;
-    };
-
 }
 
 
@@ -161,66 +169,71 @@ export class SuperScheduler {
  * here is the schedule strategy 
  */
 
-export interface IScheduleStrategy {
-    scheduleSuperJob(job: ISuperJobInfo) : string;
-}
-
-export class LinerScheduleStrategy {
-    factor: number;
-    observingTime: number;
-
-    constructor (factor : number, observingTime: number) {
-        this.factor = factor;
-        this.observingTime = observingTime;
+namespace stragety{
+    export interface IScheduleStrategy {
+        config?: any
+        scheduleSuperJob(job: ISuperJobInfo, priority: any) : string;
     }
 
-    scheduleSuperJob (job: ISuperJobInfo) : string {
-        var scores: number[];
-        var maxScore = 0;
-        var maxIndex = -1;
-        
-        job.clusters.forEach((val, index) => {
-            const subJob = job.IPaiJobs[index];
-            if (subJob.jobStatus.state === 'SUCCEEDED' ) {
-                job.state = 'SCHEDULED';
-                job.nextScheduleTime = -1;
-                return val;
+    export class LinerScheduleStrategy {
+        factor: number = 1;
+        observingTime: number = 1 * 60;
+
+        constructor (config?: any) {
+            if (config) {
+                this.factor = config.factor ? config.factor : 1;
+                this.observingTime = config.observingTime ? config.observingTime : 1 * 60;
             }
+        }
+
+        scheduleSuperJob (job: ISuperJobInfo, priority: any) : string {
+            var scores: number[];
+            var maxScore = 0;
+            var maxIndex = -1;
             
-            if (subJob.jobStatus.state === 'WAITING') {
-                scores[index] = job.priority[index];
-            }
-
-            if (subJob.jobStatus.state === 'RUNNING') {
-                scores[index] = job.priority[index] + this.factor * (now() - subJob.jobStatus.appLaunchedTime);
-            } else {
-                scores[index] = 0;
-            }
-
-            if ( maxScore < scores[index] || (!scores[index] && maxScore == scores[index] && job.priority[index] > job.priority[maxIndex])) {
-                maxScore = scores[index];
-                maxIndex = index;
-            }
-        });
-
-        if ( !maxScore) {
-            job.state = 'FAILED';
-            return "";
-        } else {
-            let choosedJob = job.IPaiJobs[maxIndex];
-            if ( choosedJob.jobStatus.state === 'RUNNING') {
-                if (now() - choosedJob.jobStatus.appLaunchedTime >= this.observingTime)
-                {
+            job.clusters.forEach((val, index) => {
+                const subJob = job.IPaiJobs[index];
+                if (subJob.jobStatus.state === 'SUCCEEDED' ) {
                     job.state = 'SCHEDULED';
                     job.nextScheduleTime = -1;
+                    return val;
                 }
-                else
-                {
-                    job.state = 'OBSERVING';
-                    job.nextScheduleTime = now() + 2 * 60;
+                
+                if (subJob.jobStatus.state === 'WAITING') {
+                    scores[index] = priority[val].priority;
                 }
+
+                if (subJob.jobStatus.state === 'RUNNING') {
+                    scores[index] = priority[val].priority + this.factor * (now() - subJob.jobStatus.appLaunchedTime);
+                } else {
+                    scores[index] = 0;
+                }
+
+                if ( maxScore < scores[index] || (!scores[index] && maxScore == scores[index] &&  priority[val].priority >  priority[val].priority)) {
+                    maxScore = scores[index];
+                    maxIndex = index;
+                }
+            });
+
+            if ( !maxScore) {
+                job.state = 'FAILED';
+                return "";
+            } else {
+                let choosedJob = job.IPaiJobs[maxIndex];
+                if ( choosedJob.jobStatus.state === 'RUNNING') {
+                    if (now() - choosedJob.jobStatus.appLaunchedTime >= this.observingTime)
+                    {
+                        job.state = 'SCHEDULED';
+                        job.nextScheduleTime = -1;
+                    }
+                    else
+                    {
+                        job.state = 'OBSERVING';
+                        job.nextScheduleTime = now() + 2 * 60;
+                    }
+                }
+                return job.clusters[maxIndex];
             }
-            return job.clusters[maxIndex];
         }
     }
 }

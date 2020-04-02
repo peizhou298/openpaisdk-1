@@ -15,16 +15,47 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-import {SuperScheduler, LinerScheduleStrategy} from "./SuperScheduler";
-import { IPAICluster } from "../../src";
+import {SuperScheduler} from "./SuperScheduler";
 import * as restify from 'restify';
+import * as Sequelize from 'sequelize';
+const sqlite3 = require('sqlite3').verbose()
+const SuperSchedulerEntity = require('./SuperSchedulerEntity');
+let path = process.argv[2] ? process.argv[2] : "./config.json";
+const config = require(path)
 
-let clusters = [];
+if (config === undefined) {
+    throw new Error( `ConfigFileNotFound : ${path}`);
+}
 
-const scheduler = new SuperScheduler(new LinerScheduleStrategy(1, 0), clusters);
-    setInterval(async () => {
+export const sequelize = new Sequelize.Sequelize(
+    {
+        pool: {
+            max: 5,
+            min: 0,
+            acquire: 30000,
+            idle: 10000
+        },
+        dialectModule: sqlite3,
+        dialect: 'sqlite',
+        storage: config.database ? config.database : './db.sqlite'
+    })
+
+sequelize
+  .authenticate()
+  .then(() => {
+    console.log('Connection has been established successfully.');
+  })
+  .catch((err: any) => {
+    console.error('Unable to connect to the database:', err);
+  });
+
+
+SuperSchedulerEntity.Init(sequelize);
+const scheduler = new SuperScheduler(config);
+
+setInterval(async () => {
     scheduler.schedule();
-}, 10000);
+}, config.scheduleInterval ? config.scheduleInterval : 60000);
  
 /**
  * here is the RESTful server
@@ -38,23 +69,21 @@ server.use(restify.plugins.acceptParser(server.acceptable));
 server.use(restify.plugins.queryParser());
 server.use(restify.plugins.bodyParser());
 
-server.get('/jobs', (req, res, next) => {
+server.get('/api/:username/jobs', (req, res, next) => {
+    // from database
+    console.log(req.params)
     res.send(scheduler.jobs);
     return next();
 });
  
-server.get('/clusters', (req, res, next) => {
+server.get('/:username/clusters', (req, res, next) => {
+    // from database
     res.send(scheduler.clusters);
     return next();
 });
  
-server.post('/job', async (req, res, next) => {
-    res.send(await scheduler.submitJob(req.body.name, req.body.clusters, req.body.priority, req.body.paiJob, req.body.username));
-    return next();
-});
-
-server.post('/test', async (req, res, next) => {
-    res.send(await scheduler.test(req.body.name, req.body.clusters, req.body.priority, req.body.paiJob, req.body.username));
+server.post('/api/:username/job', async (req, res, next) => {
+    res.send(await scheduler.submitJob(req.body, req.params.username));
     return next();
 });
 
