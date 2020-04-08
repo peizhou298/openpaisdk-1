@@ -15,9 +15,11 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-import {SuperScheduler} from "./SuperScheduler";
+import {SuperScheduler, now} from "./SuperScheduler";
 import * as restify from 'restify';
 import * as Sequelize from 'sequelize';
+import { SuperJob } from "./SuperSchedulerEntity";
+import { ISuperJobInfo } from "./superJob";
 const sqlite3 = require('sqlite3').verbose()
 const SuperSchedulerEntity = require('./SuperSchedulerEntity');
 let path = process.argv[2] ? process.argv[2] : "./config.json";
@@ -43,7 +45,7 @@ export const sequelize = new Sequelize.Sequelize(
 sequelize
   .authenticate()
   .then(() => {
-    console.log('Connection has been established successfully.');
+    console.log('Connection to database has been established successfully.');
   })
   .catch((err: any) => {
     console.error('Unable to connect to the database:', err);
@@ -53,10 +55,39 @@ sequelize
 SuperSchedulerEntity.Init(sequelize);
 const scheduler = new SuperScheduler(config);
 
+// restore super job from database
+SuperJob.findAll().then(jobs => jobs.forEach(job => {
+    var superJob: ISuperJobInfo = {
+            name: job.name,
+            username: job.username,
+            state: 'WAITING',
+            clusters: job.clusters.toString().split(','),
+            IPaiJobs: [],
+            createdTime: job.createdTime,
+            scheduleCounter: 0,
+            nextScheduleTime: Math.max(job.nextScheduleTime, now() + 2 * 60)
+        }
+    superJob.clusters.forEach(async (cluster, index) => {
+        cluster = superJob.username + "@" + cluster; 
+        if (scheduler.clusters[cluster] === undefined) {
+            console.log("Can't get infromation of cluster ", cluster);
+            superJob.IPaiJobs[index] = null
+        } else {
+            superJob.IPaiJobs[index] = await scheduler.clusters[cluster].client.get(superJob.username, superJob.name)
+        }
+    });
+    scheduler.jobs.push(superJob);
+}));
+
+console.log("Restore super jobs %s from database", scheduler.jobs);
+
+
+// schedule
 setInterval(async () => {
     scheduler.schedule();
 }, config.scheduleInterval ? config.scheduleInterval : 60000);
- 
+
+
 /**
  * here is the RESTful server
  */
@@ -71,14 +102,14 @@ server.use(restify.plugins.bodyParser());
 
 server.get('/api/:username/jobs', (req, res, next) => {
     // from database
-    console.log(req.params)
     res.send(scheduler.jobs);
     return next();
 });
  
-server.get('/:username/clusters', (req, res, next) => {
-    // from database
-    res.send(scheduler.clusters);
+server.get('/api/:username/clusters', (req, res, next) => {
+    const keys: string[] = Object.keys(scheduler.clusters)
+    console.log(keys)
+    res.send(keys.filter(key => key.includes(req.params.username)).map(cluster => cluster.split("@")[1]));
     return next();
 });
  
@@ -88,6 +119,6 @@ server.post('/api/:username/job', async (req, res, next) => {
 });
 
 server.listen(8080, function () {
-    console.log('%s listening at %s', server.name);
+    console.log('Server listening at %s', server.name);
 });
 

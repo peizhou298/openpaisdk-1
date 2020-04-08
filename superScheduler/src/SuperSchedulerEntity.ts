@@ -21,7 +21,6 @@ import { IJobStatus } from "../../src";
 const Model = Sequelize.Model;
 
 export class SuperJob extends Model{
-    public id!: number;
     public name!: string;
     public username!: string;
     public state!: 'WAITING' | 'OBSERVING' | 'SCHEDULED' | 'STOPPED' | 'FAILED' | 'UNKNOWN';
@@ -42,10 +41,12 @@ export function Init(sequelize: Sequelize.Sequelize) {
         // attributes
         username: {
             type: Sequelize.STRING,
+            primaryKey: true,
             allowNull: false
         },
         name: {
             type: Sequelize.STRING,
+            primaryKey: true,
             allowNull: false
         },
         state: {

@@ -1,0 +1,11 @@
+{
+    "clusters": [
+        {
+            "name": "<cluster_name>",
+            "username": "<username>",
+            "token": "<token>",
+            "rest_server_uri": "localhost/rest-server",
+            "priority": 10
+        }
+    ]
+}

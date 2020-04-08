@@ -115,6 +115,9 @@ export class JobClient extends OpenPAIBaseClient {
     public async submit(jobConfig: IJobConfig, token?: string): Promise<void> {
         const url: string = Util.fixUrl(`${this.cluster.rest_server_uri}/api/v2/jobs`);
         const text: string = yaml.safeDump(jobConfig);
+        console.log("url is ", url)
+        console.log("job config is", jobConfig);
+        
         if (token === undefined) {
             token = await super.token();
         }

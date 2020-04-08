@@ -16,11 +16,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import {ISuperJobConfig, ISuperJobInfo } from "./superJob";
-import { JobClient, IJobConfig } from "../../src";
+import { JobClient, IJobConfig, IJobStatus } from "../../src";
 import { IPAICluster } from "../../src/models/cluster";
 import { SuperJob } from "./SuperSchedulerEntity";
 
-const now = () => new Date().getTime();
+export const now = () => new Date().getTime();
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
@@ -50,16 +50,16 @@ export class SuperScheduler {
                 info: {name: cluster.name},
                 username: cluster.username,
                 token: cluster.token,
-                web_portal_uri: cluster.web_portal_uri};
+                rest_server_uri: cluster.rest_server_uri};
 
             this.addCluster(paiCluster, cluster.priority?cluster.priority:1);
         });
     }
 
-    findJob = (name: string) => this.jobs[this.jobs.findIndex(val => val.name == name)];
+    findJob = (name: string, username: string) => this.jobs[this.jobs.findIndex(val => val.name == name && val.username == username)];
 
     addCluster = (paiCluster: IPAICluster, priority: number)=> {
-        let clusterName = paiCluster.username + paiCluster.info.name
+        let clusterName = paiCluster.username + "@" +  paiCluster.info.name
         if(clusterName in this.clusters)
         {
             throw new Error( `ClusterAlreadyExists: ${paiCluster}`);
@@ -70,7 +70,7 @@ export class SuperScheduler {
     };
 
     submitJob = async (config: ISuperJobConfig, username: string) => {
-        if (this.findJob(config.name))
+        if (this.findJob(config.name, username))
         {
             throw new Error(`JobAlreadyExists: ${name}`);
         }
@@ -79,13 +79,13 @@ export class SuperScheduler {
             name: config.name,
             username: username,
             state: 'WAITING',
-            clusters: config.clusters.map((cluster) => username + cluster),
+            clusters: config.clusters.map((cluster) => username + "@" + cluster),
             IPaiJobs: [],
             createdTime: now(),
             scheduleCounter: 0,
             nextScheduleTime: now() + config.scheduleInterval?config.scheduleInterval : 2 * 60,
         };
-
+        
         SuperJob.create({
             name: config.name,
             username: username,
@@ -94,25 +94,29 @@ export class SuperScheduler {
             clusters: config.clusters.toString(),
             scheduleCounter: 0,
             nextScheduleTime:superjob.nextScheduleTime,
-        }).then(superJob => {
-            console.log("Create a new superJob:", superJob);
         });
 
         superjob.clusters.forEach(async (val, idx) => {
             let client = this.clusters[val].client;
-            await client.submit(config as IJobConfig);
+            let jobConfig = config
+            delete jobConfig.clusters
+            delete jobConfig.priority
+            delete jobConfig.scheduleInterval
+            await client.submit(jobConfig as IJobConfig);
         });
         
         // sleep 5s to make sure job created in each cluster
         await delay(5000);
-
+        var tasks: Promise<IJobStatus>[];
         superjob.clusters.forEach(async (val, idx) => {
-            superjob.IPaiJobs[idx] = await this.clusters[val].client.get(username, config.name);
-            console.log(superjob.IPaiJobs[idx]);
+            tasks[idx] = this.clusters[val].client.get(username, config.name);
+        });
+        tasks.forEach(async(task, idx) =>  {
+            superjob.IPaiJobs[idx] = await task;
+            console.log("Get pai job %s for super job", superjob.IPaiJobs[idx], superjob.name)
         });
 
-        //TODO: add a new super job entity in database
-        this.jobs.push(superjob);
+        this.jobs.push(superjob);    
         return superjob;
     };
 
@@ -123,9 +127,7 @@ export class SuperScheduler {
             const subJob = job.IPaiJobs[idx];
             if (subJob && ['WAITING', 'RUNNING'].indexOf(subJob.jobStatus.state) > -1) {
                 // need to query latest status
-                if (subJob.name) {
-                    job.IPaiJobs[idx] = await client.get(job.username, subJob.name);
-                }
+                job.IPaiJobs[idx] = await client.get(job.username, subJob.name);
             }
         });
 
@@ -138,7 +140,7 @@ export class SuperScheduler {
                   username: job.username
                 }
               }).then(() => {
-                console.log("Update user %s job %s status to %s", job.username, job.name, job.state);
+                console.log("Update user %s job %s state from %s to %s", job.username, job.name, currentState, job.state);
               });
         }
 
@@ -168,7 +170,6 @@ export class SuperScheduler {
 /**
  * here is the schedule strategy 
  */
-
 namespace stragety{
     export interface IScheduleStrategy {
         config?: any
